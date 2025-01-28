@@ -1,0 +1,174 @@
+// #include <Arduino.h>
+// #include <WiFi.h>
+// #include <PubSubClient.h>
+// #include "esp_camera.h"
+// #include "FS.h"
+// #include "SPI.h"
+// #include "SdFat.h"
+
+// WiFi配置
+// const char *WIFI_SSID = "ybc2";
+// const char *WIFI_PASSWORD = "20010219";
+
+// // MQTT配置
+// const char *MQTT_BROKER = "121.43.141.184";
+// const int MQTT_PORT = 1883;
+// const char *MQTT_TOPIC = "esp32cam";
+// const char *MQTT_CLIENT_ID = "esp32_cam_stream";
+
+// // ESP32-CAM引脚配置
+// #define PWDN_GPIO_NUM 32
+// #define RESET_GPIO_NUM -1
+// #define XCLK_GPIO_NUM 0
+// #define SIOD_GPIO_NUM 26
+// #define SIOC_GPIO_NUM 27
+// #define Y9_GPIO_NUM 35
+// #define Y8_GPIO_NUM 34
+// #define Y7_GPIO_NUM 39
+// #define Y6_GPIO_NUM 36
+// #define Y5_GPIO_NUM 21
+// #define Y4_GPIO_NUM 19
+// #define Y3_GPIO_NUM 18
+// #define Y2_GPIO_NUM 5
+// #define VSYNC_GPIO_NUM 25
+// #define HREF_GPIO_NUM 23
+// #define PCLK_GPIO_NUM 22
+
+// WiFiClient espClient;
+// PubSubClient mqttClient(espClient);
+
+// // 设置回调函数（可选）
+// void mqttCallback(char *topic, byte *payload, unsigned int length)
+// {
+//   Serial.print("Received message on topic: ");
+//   Serial.println(topic);
+//   // 处理接收到的消息（如果需要）
+// }
+
+// void setupCamera()
+// {
+//   camera_config_t config;
+//   config.ledc_channel = LEDC_CHANNEL_0;
+//   config.ledc_timer = LEDC_TIMER_0;
+//   config.pin_d0 = Y2_GPIO_NUM;
+//   config.pin_d1 = Y3_GPIO_NUM;
+//   config.pin_d2 = Y4_GPIO_NUM;
+//   config.pin_d3 = Y5_GPIO_NUM;
+//   config.pin_d4 = Y6_GPIO_NUM;
+//   config.pin_d5 = Y7_GPIO_NUM;
+//   config.pin_d6 = Y8_GPIO_NUM;
+//   config.pin_d7 = Y9_GPIO_NUM;
+//   config.pin_xclk = XCLK_GPIO_NUM;
+//   config.pin_pclk = PCLK_GPIO_NUM;
+//   config.pin_vsync = VSYNC_GPIO_NUM;
+//   config.pin_href = HREF_GPIO_NUM;
+//   config.pin_sccb_sda = SIOD_GPIO_NUM;
+//   config.pin_sccb_scl = SIOC_GPIO_NUM;
+//   config.pin_pwdn = PWDN_GPIO_NUM;
+//   config.pin_reset = RESET_GPIO_NUM;
+//   config.xclk_freq_hz = 20000000;
+//   config.pixel_format = PIXFORMAT_JPEG;
+
+//   // 配置分辨率和缓冲区
+//   config.frame_size = FRAMESIZE_VGA;
+//   config.jpeg_quality = 10;
+//   config.fb_count = 2;
+
+//   // 初始化摄像头
+//   esp_err_t err = esp_camera_init(&config);
+//   if (err != ESP_OK)
+//   {
+//     Serial.printf("Camera init failed with error 0x%x", err);
+//     delay(1000);
+//     return;
+//   }
+// }
+
+// void setupWiFi()
+// {
+//   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+//   unsigned long startAttemptTime = millis();
+//   while (WiFi.status() != WL_CONNECTED)
+//   {
+//     if (millis() - startAttemptTime >= 10000) // 10秒超时
+//     {
+//       Serial.println("Failed to connect to WiFi. Exiting...");
+//       return; // 超时退出
+//     }
+//     delay(500);
+//     Serial.print(".");
+//   }
+//   Serial.println("\nWiFi connected");
+// }
+
+// void reconnectMQTT()
+// {
+//   while (!mqttClient.connected())
+//   {
+//     Serial.print("Attempting MQTT connection...");
+//     if (mqttClient.connect(MQTT_CLIENT_ID))
+//     {
+//       Serial.println("connected");
+//       mqttClient.subscribe(MQTT_TOPIC); // 订阅主题（如果需要接收消息）
+//     }
+//     else
+//     {
+//       Serial.print("failed, rc=");
+//       Serial.print(mqttClient.state());
+//       // 这里报错的原因是没有设置config
+//       Serial.println(" retrying in 5 seconds");
+//       delay(5000);
+//     }
+//   }
+// }
+
+// void streamVideoFrame()
+// {
+//   camera_fb_t *fb = esp_camera_fb_get();
+//   if (!fb)
+//   {
+//     Serial.println("Camera capture failed");
+//     return;
+//   }
+//   // Serial.print("Image size: ");
+//   // Serial.println(fb->len); // 查看图片大小
+//   // 发布JPEG图像到MQTT主题
+//   if (mqttClient.publish(MQTT_TOPIC, (const char *)fb->buf, fb->len))
+//   {
+//     // 这里的fb->buf需要强制类型转换为const char*，否则会报错
+//     Serial.println("Frame published successfully");
+//   }
+//   else
+//   {
+//     Serial.println("Frame publish failed");
+//   }
+
+//   esp_camera_fb_return(fb);
+// }
+
+// void setup()
+// {
+//   Serial.begin(115200);
+//   setupWiFi();
+//   setupCamera();
+
+//   mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+//   mqttClient.setCallback(mqttCallback); // 设置回调函数
+// }
+
+// void loop()
+// {
+//   if (!mqttClient.connected())
+//   {
+//     reconnectMQTT();
+//   }
+//   mqttClient.loop();
+
+//   // 每100ms发送一帧
+//   static unsigned long lastFrameTime = 0;
+//   if (millis() - lastFrameTime > 1000)
+//   {
+//     streamVideoFrame();
+//     lastFrameTime = millis();
+//   }
+// }

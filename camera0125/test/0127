@@ -1,0 +1,302 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "esp_camera.h"
+#include "FS.h"
+#include "SPI.h"
+#include "SdFat.h"
+
+// WiFi配置
+const char *WIFI_SSID = "ybc2";
+const char *WIFI_PASSWORD = "20010219";
+
+// MQTT配置
+const char *MQTT_BROKER = "121.43.141.184";
+const int MQTT_PORT = 1883;
+const char *MQTT_TOPIC = "esp32cam";
+const char *MQTT_CLIENT_ID = "esp32_cam_stream";
+
+// ESP32-CAM引脚配置
+#define PWDN_GPIO_NUM 32
+#define RESET_GPIO_NUM -1
+#define XCLK_GPIO_NUM 0
+#define SIOD_GPIO_NUM 26
+#define SIOC_GPIO_NUM 27
+#define Y9_GPIO_NUM 35
+#define Y8_GPIO_NUM 34
+#define Y7_GPIO_NUM 39
+#define Y6_GPIO_NUM 36
+#define Y5_GPIO_NUM 21
+#define Y4_GPIO_NUM 19
+#define Y3_GPIO_NUM 18
+#define Y2_GPIO_NUM 5
+#define VSYNC_GPIO_NUM 25
+#define HREF_GPIO_NUM 23
+#define PCLK_GPIO_NUM 22
+
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+
+// 设置回调函数（可选）
+void mqttCallback(char *topic, byte *payload, unsigned int length)
+{
+    Serial.print("Received message on topic: ");
+    Serial.println(topic);
+    // 处理接收到的消息（如果需要）
+}
+
+void setupCamera()
+{
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM;
+    config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM;
+    config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM;
+    config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM;
+    config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sccb_sda = SIOD_GPIO_NUM;
+    config.pin_sccb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = PWDN_GPIO_NUM;
+    config.pin_reset = RESET_GPIO_NUM;
+    config.xclk_freq_hz = 20000000;
+    config.pixel_format = PIXFORMAT_JPEG;
+
+    // 配置分辨率和缓冲区
+    config.frame_size = FRAMESIZE_VGA;
+    config.jpeg_quality = 10;
+    config.fb_count = 2;
+
+    // 初始化摄像头
+    esp_err_t err = esp_camera_init(&config);
+    if (err != ESP_OK)
+    {
+        Serial.printf("Camera init failed with error 0x%x", err);
+        delay(1000);
+        return;
+    }
+}
+
+void setupWiFi()
+{
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    unsigned long startAttemptTime = millis();
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        if (millis() - startAttemptTime >= 10000) // 10秒超时
+        {
+            Serial.println("Failed to connect to WiFi. Exiting...");
+            return; // 超时退出
+        }
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("\nWiFi connected");
+}
+
+void reconnectMQTT()
+{
+    while (!mqttClient.connected())
+    {
+        Serial.print("Attempting MQTT connection...");
+        if (mqttClient.connect(MQTT_CLIENT_ID))
+        {
+            Serial.println("connected");
+            mqttClient.subscribe(MQTT_TOPIC); // 订阅主题（如果需要接收消息）
+        }
+        else
+        {
+            Serial.print("failed, rc=");
+            Serial.print(mqttClient.state());
+            // 这里报错的原因是没有设置config
+            Serial.println(" retrying in 5 seconds");
+            delay(5000);
+        }
+    }
+}
+
+void streamVideoFrame()
+{
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb)
+    {
+        Serial.println("Camera capture failed");
+        return;
+    }
+
+    size_t chunk_size = 240;
+    size_t total_len = fb->len;
+    size_t num_chunks = (total_len + chunk_size - 1) / chunk_size; // 计算需要多少个块
+
+    // 通知接收端开始发送
+    mqttClient.publish(MQTT_TOPIC, "START", 5);
+
+    for (size_t i = 0; i < num_chunks; i++)
+    {
+        size_t start_index = i * chunk_size;
+        size_t end_index = min(start_index + chunk_size, total_len);
+
+        // 发送当前数据块
+        mqttClient.publish(MQTT_TOPIC, fb->buf + start_index, end_index - start_index);
+
+        // 可选：添加一个延迟，避免过快地发送数据
+        delay(50);
+    }
+
+    // 通知接收端结束发送
+    mqttClient.publish(MQTT_TOPIC, "END", 3);
+
+    esp_camera_fb_return(fb);
+    delay(5000);
+}
+
+#define CHUNK_SIZE 240 // 每块数据的大小
+
+void testPublish()
+{
+    // 创建一个包含测试数据的 uint8_t 数组
+    uint8_t testData[] = {0xFF, 0xD8, 0xE0, 0xF0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                          0xFF, 0xD8, 0xE0, 0xE0, 0x00, 0x01, 0xFF, 0xD8, 0xE0, 0xF0}; // 示例数据
+    size_t testDataLen = sizeof(testData) / sizeof(testData[0]);
+
+    // 设置每个数据块的大小（240字节）
+    size_t chunk_size = 240;
+    size_t num_chunks = (testDataLen + chunk_size - 1) / chunk_size; // 计算需要发送多少个块
+
+    // 通知接收端开始发送数据
+    mqttClient.publish(MQTT_TOPIC, "START", 5);
+    delay(50); // 可以根据需要加延迟，以避免过快发送
+
+    for (size_t i = 0; i < num_chunks; i++)
+    {
+        size_t start_index = i * chunk_size;
+        size_t end_index = min(start_index + chunk_size, testDataLen);
+
+        // 发送当前数据块
+        if (mqttClient.publish(MQTT_TOPIC, testData + start_index, end_index - start_index))
+        {
+            Serial.println("Chunk published successfully.");
+        }
+        else
+        {
+            Serial.println("Chunk publish failed.");
+        }
+
+        delay(50); // 可以适当加点延迟，确保接收端处理
+    }
+
+    // 通知接收端数据发送完毕
+    mqttClient.publish(MQTT_TOPIC, "END", 3);
+
+    delay(5000); // 发送完成后的延迟，防止连续发送
+}
+
+void setup()
+{
+    Serial.begin(115200);
+    setupWiFi();
+    setupCamera();
+
+    // 定义一个16位的数据
+    uint16_t value = 0x1234;
+
+    // 将16位数据拆分成两个8位数据并右移
+    uint8_t lowerByte = value & 0xFF;        // 获取低8位
+    uint8_t upperByte = (value >> 8) & 0xFF; // 获取高8位并右移8位
+
+    // 打印原始值和拆分后的值
+    Serial.print("Original value: 0x");
+    Serial.println(value, HEX); // 打印16位数据的原始值
+
+    Serial.print("Lower byte (0xFF mask): 0x");
+    Serial.println(lowerByte, HEX); // 打印低8位
+
+    Serial.print("Upper byte (after right shift): 0x");
+    Serial.println(upperByte, HEX); // 打印高8位并右移后结果
+
+    // 测试右移后的效果
+    uint8_t shiftedValue = upperByte >> 8; // 右移8位
+    Serial.print("Shifted value: 0x");
+    Serial.println(shiftedValue, HEX); // 打印右移后的值
+
+    mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+    mqttClient.setCallback(mqttCallback); // 设置回调函数
+}
+
+void loop()
+{
+    if (!mqttClient.connected())
+    {
+        reconnectMQTT();
+    }
+    mqttClient.loop();
+    streamVideoFrame(); // 流式传输视频帧
+                        // testPublish(); // 测试发布数据
+                        // // 每100ms发送一帧
+                        // static unsigned long lastFrameTime = 0;
+                        // if (millis() - lastFrameTime > 10000)
+                        // {
+                        //   streamVideoFrame();
+                        //   lastFrameTime = millis();
+                        // }
+}
