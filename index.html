@@ -1,0 +1,43 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ESP32-CAM Viewer</title>
+    <style>
+        #videoCanvas {
+            max-width: 100%;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="videoCanvas"></canvas>
+    
+    <script>
+        const canvas = document.getElementById('videoCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Connect to WebSocket server
+        const ws = new WebSocket('ws://121.43.141.184:8080/ws');
+        
+        ws.onmessage = function(event) {
+            // Convert received binary data to image
+            const imageUrl = URL.createObjectURL(new Blob([event.data], { type: 'image/jpeg' }));
+            const img = new Image();
+            
+            img.onload = function() {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                URL.revokeObjectURL(imageUrl);
+            };
+            
+            img.src = imageUrl;
+        };
+        
+        ws.onclose = function() {
+            console.log('WebSocket connection closed');
+        };
+    </script>
+</body>
+</html>
