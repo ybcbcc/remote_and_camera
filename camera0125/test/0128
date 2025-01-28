@@ -7,7 +7,7 @@
 #include "SdFat.h"
 using namespace websockets;
 
-// Camera pins for ESP32-CAM (保持原有定义不变)
+// Camera pins for ESP32-CAM
 #define PWDN_GPIO_NUM 32
 #define RESET_GPIO_NUM -1
 #define XCLK_GPIO_NUM 0
@@ -33,9 +33,8 @@ const char *password = "20010219";
 const char *websocket_server = "121.43.141.184";
 const uint16_t websocket_port = 8080;
 
-WebsocketsClient client;
+WebsocketsClient client; // Declare only once
 bool client_connected = false;
-bool camera_active = false; // 新增摄像头状态控制变量
 
 void configCamera()
 {
@@ -60,10 +59,13 @@ void configCamera()
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_QVGA;
-  config.jpeg_quality = 10;
+
+  // Initialize with high specs to pre-allocate larger buffers
+  config.frame_size = FRAMESIZE_QVGA; // 320x240
+  config.jpeg_quality = 10;           // 0-63 lower number means higher quality
   config.fb_count = 1;
 
+  // Camera init
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK)
   {
@@ -72,33 +74,20 @@ void configCamera()
   }
 
   sensor_t *s = esp_camera_sensor_get();
+  // Initial sensors are flipped vertically and colors are a bit saturated
   if (s->id.PID == OV3660_PID)
   {
-    s->set_vflip(s, 1);
-    s->set_brightness(s, 1);
-    s->set_saturation(s, -2);
+    s->set_vflip(s, 1);       // flip it back
+    s->set_brightness(s, 1);  // up the brightness just a bit
+    s->set_saturation(s, -2); // lower the saturation
   }
 }
 
 void onMessageCallback(WebsocketsMessage message)
 {
-  String msg = message.data();
+  // Handle incoming messages if needed
   Serial.print("Got Message: ");
-  Serial.println(msg);
-
-  // 处理控制命令
-  if (msg == "start_camera")
-  {
-    camera_active = true;
-    Serial.println("Camera activated");
-    client.send("camera_started"); // 发送确认消息
-  }
-  else if (msg == "stop_camera")
-  {
-    camera_active = false;
-    Serial.println("Camera deactivated");
-    client.send("camera_stopped"); // 发送确认消息
-  }
+  Serial.println(message.data());
 }
 
 void onEventsCallback(WebsocketsEvent event, String data)
@@ -112,7 +101,6 @@ void onEventsCallback(WebsocketsEvent event, String data)
   {
     Serial.println("Connection Closed");
     client_connected = false;
-    camera_active = false; // 连接断开时停止摄像
   }
   else if (event == WebsocketsEvent::GotPing)
   {
@@ -126,9 +114,6 @@ void onEventsCallback(WebsocketsEvent event, String data)
 
 void captureAndSendFrame()
 {
-  if (!camera_active)
-    return; // 如果摄像头未激活，直接返回
-
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb)
   {
@@ -168,7 +153,10 @@ void setup()
   client.onEvent(onEventsCallback);
 
   // Connect to WebSocket server
-  client.connect(websocket_server, websocket_port, "/camera");
+  client.connect(websocket_server, websocket_port, "/ws");
+
+  // Send a ping every 15000 ms (15 seconds)
+  // client.setPingInterval(15000);
 }
 
 void loop()
@@ -187,21 +175,19 @@ void loop()
   static unsigned long lastPingTime = 0;
   if (millis() - lastPingTime > 15000)
   {
-    client.send("ping");
+    client.send("ping"); // Send a custom ping message
     lastPingTime = millis();
     Serial.println("Ping sent");
   }
 
   if (client_connected)
   {
-    captureAndSendFrame(); // 只有在camera_active为true时才会实际捕获和发送帧
-    if (camera_active)
-    {
-      delay(100); // 只在实际发送帧时增加延迟
-    }
+    captureAndSendFrame();
+    delay(100); // Adjust frame rate by changing delay
   }
   else
   {
+    // Try to reconnect to WebSocket server
     if (!client.connect(websocket_server, websocket_port, "/ws"))
     {
       Serial.println("WebSocket connection failed. Retrying in 5 seconds...");

@@ -1,0 +1,42 @@
+#include <IRremoteESP8266.h>
+#include <IRrecv.h>
+#include <IRutils.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+const int recv_pin = 15; // 红外接收模块的接收引脚 (根据实际连接修改)
+
+IRrecv irrecv(recv_pin);
+decode_results results;
+
+void setup()
+{
+  Serial.begin(115200);
+  irrecv.enableIRIn(); // 启动红外接收
+  Serial.println("Redir Receiver Ready");
+}
+
+void loop()
+{
+  if (irrecv.decode(&results))
+  {
+    Serial.println("Received an IR signal!");
+    long int decCode = results.value; // 获取红外信号的原始值
+
+    // 打印接收到的红外信号值
+    Serial.print("IR Code: ");
+    Serial.println(decCode, HEX); // 以十六进制输出
+/*
+44BB01FE VOICE+
+44BB817E VOICE-
+44BB53AC UP
+44BB9966 LEFT
+44BB837C RIGHT
+44BB4BB4 DOWN
+44BB738C OK
+44BB11EE MENU
+44BBA956 BACK
+*/
+    irrecv.resume(); // 接收下一个信号
+  }
+}

@@ -1,43 +1,241 @@
-<!-- public/index.html -->
 <!DOCTYPE html>
 <html>
 <head>
-    <title>ESP32-CAM Viewer</title>
+    <title>ESP32-CAM Viewer & Remote Control</title>
     <style>
+        /* 保持原有样式不变 */
+        body {
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 0 20px;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
         #videoCanvas {
             max-width: 100%;
             border: 1px solid #ccc;
+            margin-bottom: 20px;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        .camera-controls button {
+            padding: 10px 20px;
+            margin: 0 10px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+        }
+        #startBtn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #stopBtn {
+            background-color: #f44336;
+            color: white;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .connected {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+        .disconnected {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .remote-control {
+            margin-top: 20px;
+            width: 300px;
+        }
+        .remote-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 8px;
+        }
+        .remote-btn {
+            padding: 20px 0;
+            font-size: 14px;
+            border: none;
+            border-radius: 4px;
+            background-color: #2196F3;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .remote-btn:hover {
+            background-color: #1976D2;
+        }
+        .remote-btn:active {
+            background-color: #1565C0;
+        }
+        .status-container {
+            display: flex;
+            gap: 20px;
         }
     </style>
 </head>
 <body>
-    <canvas id="videoCanvas"></canvas>
+    <div class="container">
+        <h1>ESP32-CAM Viewer & Remote Control</h1>
+        
+        <div class="camera-controls">
+            <button id="startBtn">Start Camera</button>
+            <button id="stopBtn">Stop Camera</button>
+        </div>
+        
+        <canvas id="videoCanvas"></canvas>
+        <div class="status-container">
+            <div id="cameraStatus" class="status">Camera: Disconnected</div>
+            <div id="remoteStatus" class="status">Remote: Disconnected</div>
+        </div>
+
+        <h2>Remote Control</h2>
+        <div class="remote-control">
+            <div class="remote-grid">
+                <button class="remote-btn" data-cmd="power">voice+</button>
+                <button class="remote-btn" data-cmd="temp_up">voice-</button>
+                <button class="remote-btn" data-cmd="temp_down">up</button>
+                <button class="remote-btn" data-cmd="mode">left</button>
+                <button class="remote-btn" data-cmd="fan">right</button>
+                <button class="remote-btn" data-cmd="timer">down</button>
+                <button class="remote-btn" data-cmd="swing">ok</button>
+                <button class="remote-btn" data-cmd="sleep">manu</button>
+                <button class="remote-btn" data-cmd="eco">back</button>
+            </div>
+        </div>
+    </div>
     
     <script>
         const canvas = document.getElementById('videoCanvas');
         const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const cameraStatusDiv = document.getElementById('cameraStatus');
+        const remoteStatusDiv = document.getElementById('remoteStatus');
         
-        // Connect to WebSocket server
-        const ws = new WebSocket('ws://121.43.141.184:8080/ws');
-        
-        ws.onmessage = function(event) {
-            // Convert received binary data to image
-            const imageUrl = URL.createObjectURL(new Blob([event.data], { type: 'image/jpeg' }));
-            const img = new Image();
+        let cameraWs = null;
+        let remoteWs = null;
+
+        function updateCameraStatus(connected) {
+            cameraStatusDiv.textContent = 'Camera: ' + (connected ? 'Connected' : 'Disconnected');
+            cameraStatusDiv.className = 'status ' + (connected ? 'connected' : 'disconnected');
+        }
+
+        function updateRemoteStatus(connected) {
+            remoteStatusDiv.textContent = 'Remote: ' + (connected ? 'Connected' : 'Disconnected');
+            remoteStatusDiv.className = 'status ' + (connected ? 'connected' : 'disconnected');
+        }
+
+        function connectCameraWebSocket() {
+            cameraWs = new WebSocket('ws://121.43.141.184:8080/camera');
             
-            img.onload = function() {
-                canvas.width = img.width;
-                canvas.height = img.height;
-                ctx.drawImage(img, 0, 0);
-                URL.revokeObjectURL(imageUrl);
+            cameraWs.onopen = function() {
+                updateCameraStatus(true);
+            };
+
+            cameraWs.onmessage = function(event) {
+                if (event.data instanceof Blob) {
+                    const imageUrl = URL.createObjectURL(event.data);
+                    const img = new Image();
+                    
+                    img.onload = function() {
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+                        URL.revokeObjectURL(imageUrl);
+                    };
+                    
+                    img.src = imageUrl;
+                } else {
+                    console.log('Camera message:', event.data);
+                }
             };
             
-            img.src = imageUrl;
-        };
-        
-        ws.onclose = function() {
-            console.log('WebSocket connection closed');
-        };
+            cameraWs.onclose = function() {
+                updateCameraStatus(false);
+                setTimeout(connectCameraWebSocket, 5000);
+            };
+
+            cameraWs.onerror = function(err) {
+                console.error('Camera WebSocket error:', err);
+                updateCameraStatus(false);
+            };
+        }
+
+        function connectRemoteWebSocket() {
+            remoteWs = new WebSocket('ws://121.43.141.184:8080/remote');
+            
+            remoteWs.onopen = function() {
+                updateRemoteStatus(true);
+            };
+
+            remoteWs.onmessage = function(event) {
+                console.log('Remote message:', event.data);
+            };
+            
+            remoteWs.onclose = function() {
+                updateRemoteStatus(false);
+                setTimeout(connectRemoteWebSocket, 5000);
+            };
+
+            remoteWs.onerror = function(err) {
+                console.error('Remote WebSocket error:', err);
+                updateRemoteStatus(false);
+            };
+        }
+
+        // 初始连接
+        connectCameraWebSocket();
+        connectRemoteWebSocket();
+
+        // 摄像头控制按钮事件
+        startBtn.addEventListener('click', function() {
+            if (cameraWs && cameraWs.readyState === WebSocket.OPEN) {
+                cameraWs.send('start_camera');
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            }
+        });
+
+        stopBtn.addEventListener('click', function() {
+            if (cameraWs && cameraWs.readyState === WebSocket.OPEN) {
+                cameraWs.send('stop_camera');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        });
+
+        // 遥控按钮事件处理
+        document.querySelectorAll('.remote-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                if (remoteWs && remoteWs.readyState === WebSocket.OPEN) {
+                    const cmd = this.dataset.cmd;
+                    remoteWs.send(cmd);
+                    console.log('Sent remote command:', cmd);
+                    
+                    // 按钮按下效果
+                    this.style.backgroundColor = '#1565C0';
+                    setTimeout(() => {
+                        this.style.backgroundColor = '#2196F3';
+                    }, 200);
+                }
+            });
+        });
+
+        // 初始状态设置
+        stopBtn.disabled = true;
     </script>
 </body>
 </html>
