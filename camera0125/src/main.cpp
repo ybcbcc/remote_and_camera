@@ -202,7 +202,7 @@ void loop()
   }
   else
   {
-    if (!client.connect(websocket_server, websocket_port, "/ws"))
+    if (!client.connect(websocket_server, websocket_port, "/camera"))
     {
       Serial.println("WebSocket connection failed. Retrying in 5 seconds...");
       delay(5000);
