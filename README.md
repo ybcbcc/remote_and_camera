@@ -1,5 +1,5 @@
 # 智能家居远程监控遥控设备
-## 监控装置
+## 监控装置（监控装置的代码基于 vscode platformio，请根据情况移植）
 ### 1. 使用的库
 ```
 #include <WiFi.h>
@@ -133,4 +133,33 @@ captureAndSendFrame 函数解析：
 5. WebSocket 断线重连：如果 WebSocket 断开，尝试重新连接，连接失败则等待 5 秒后重试。
 
 ## 服务器设置
-未完待续
+### 1.安装Node.js和npm
+```
+# 更新包管理器
+sudo apt update
+# 安装 Node.js（推荐使用包管理工具安装 Node.js）
+sudo apt install nodejs npm
+```
+### 2.将 server.js 上传到服务器，复制也可以
+
+### 3.安装依赖项
+```
+# 进入项目目录
+cd /path/to/your/project
+# 初始化npm项目（如果还没有package.json）
+npm init -y
+# 安装依赖包
+npm install express ws
+```
+### 4. 运行服务器
+```
+node server.js
+```
+记得配置服务器的 8080 端口以及防火墙哦
+
+## 控制端设置
+控制端可简单了，将文件的当前文件夹的命令行打开后，执行
+```
+python -m http.server 8080
+```
+在浏览器localhost:8080即可访问控制端。
